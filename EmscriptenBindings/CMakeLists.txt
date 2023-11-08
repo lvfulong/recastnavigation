@@ -41,4 +41,11 @@ install(TARGETS EmscriptenBindings
 
 set_target_properties(EmscriptenBindings PROPERTIES OUTPUT_NAME "recastnavigation.${CMAKE_BUILD_TYPE}")
 
+SET(DISTRO_LIBS EmscriptenBindings)
+INSTALL(
+	TARGETS ${DISTRO_LIBS}
+	EXPORT EmscriptenBindings
+	DESTINATION $<$<CONFIG:debug>:${CMAKE_INSTALL_LIBDIR}/debug>$<$<CONFIG:release>:${CMAKE_INSTALL_LIBDIR}/release>$<$<CONFIG:checked>:${CMAKE_INSTALL_LIBDIR}/checked>$<$<CONFIG:profile>:${CMAKE_INSTALL_LIBDIR}/profile>	
+	)
+
 
