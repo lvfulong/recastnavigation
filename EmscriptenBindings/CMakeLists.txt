@@ -38,20 +38,21 @@ SET_TARGET_PROPERTIES(EmscriptenBindings PROPERTIES
 add_dependencies(EmscriptenBindings DebugUtils Detour DetourCrowd DetourTileCache Recast)
 
 
-install(TARGETS EmscriptenBindings
-        RUNTIME DESTINATION bin
-        BUNDLE DESTINATION bin)
+
 #install(DIRECTORY Bin/Meshes DESTINATION bin)
 #install(DIRECTORY Bin/TestCases DESTINATION bin)
 #install(FILES Bin/DroidSans.ttf DESTINATION bin)
 
 set_target_properties(EmscriptenBindings PROPERTIES OUTPUT_NAME "recastnavigation.${CMAKE_BUILD_TYPE}")
 
-SET(DISTRO_LIBS EmscriptenBindings)
-INSTALL(
-	TARGETS ${DISTRO_LIBS}
-	EXPORT EmscriptenBindings
-	DESTINATION $<$<CONFIG:debug>:${CMAKE_INSTALL_LIBDIR}/debug>$<$<CONFIG:release>:${CMAKE_INSTALL_LIBDIR}/release>$<$<CONFIG:checked>:${CMAKE_INSTALL_LIBDIR}/checked>$<$<CONFIG:profile>:${CMAKE_INSTALL_LIBDIR}/profile>	
-	)
+#SET(DISTRO_LIBS EmscriptenBindings)
+#INSTALL(
+#	TARGETS ${DISTRO_LIBS}
+#	EXPORT EmscriptenBindings
+#	DESTINATION $<$<CONFIG:debug>:${CMAKE_INSTALL_LIBDIR}/debug>$<$<CONFIG:release>:${CMAKE_INSTALL_LIBDIR}/release>$<$<CONFIG:checked>:${CMAKE_INSTALL_LIBDIR}/checked>$<$<CONFIG:profile>:${CMAKE_INSTALL_LIBDIR}/profile>	
+#	)
 
 
+install(TARGETS EmscriptenBindings
+        RUNTIME DESTINATION bin
+        BUNDLE DESTINATION bin)
