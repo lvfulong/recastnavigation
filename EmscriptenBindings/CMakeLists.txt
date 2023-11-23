@@ -1,4 +1,4 @@
-file(GLOB SOURCES ./*.cpp ./*.h)
+#file(GLOB SOURCES ./*.cpp ./*.h)
 
 
 SET(EMSCRIPTEN_USE_ASSERTIONS "1")
@@ -18,8 +18,14 @@ include_directories(../Recast/Include)
 include_directories(Include)
 
 
-ADD_EXECUTABLE(EmscriptenBindings ${SOURCES})
+set(SOURCES)
 
+list(APPEND SOURCES
+	EmscriptenBindings.cpp
+)
+	
+#ADD_EXECUTABLE(EmscriptenBindings ${SOURCES})
+ADD_EXECUTABLE(EmscriptenBindings ${SOURCES})
 
 #file(COPY Bin/Meshes DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
 #file(COPY Bin/TestCases DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
