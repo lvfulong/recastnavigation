@@ -108,5 +108,5 @@ add_custom_command(
   #DEPENDS ${EXE_NAME}-bindings ${EXE_NAME}
   COMMENT "Building ${EXE_NAME} webassembly"
   VERBATIM)
-add_custom_target(${EXE_NAME}-wasm ALL DEPENDS ${EXE_NAME}.wasm.js ${EXE_NAME}.wasm.wasm)
+add_custom_target(${EXE_NAME}-wasm ALL DEPENDS ${EXE_NAME}.${CMAKE_BUILD_TYPE}.wasm.js ${EXE_NAME}.${CMAKE_BUILD_TYPE}.wasm.wasm)
 
