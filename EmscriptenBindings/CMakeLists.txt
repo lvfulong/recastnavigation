@@ -50,6 +50,7 @@ ADD_LIBRARY(${EXE_NAME} ${SRC_FILES} ${RECASTDETOUR_FILES})
 set(CMAKE_BUILD_TYPE Release CACHE STRING "Build Type")
 
 set(EMCC_ARGS
+  #-fno-rtti
   -flto
   #--extern-pre-js ${RECAST_FRONT_MATTER_FILE}
   #--post-js glue.js
@@ -66,7 +67,7 @@ set(EMCC_ARGS
   -s NO_FILESYSTEM=1
   -s FILESYSTEM=0
   -s EXPORT_ES6=1
-  -s BINARYEN_IGNORE_IMPLICIT_TRAPS=1
+  -s BINARYEN_IGNORE_IMPLICIT_TRAPS=1 
   # Start: Uncomment for debugging
   # -O0
   # -g
@@ -104,7 +105,7 @@ set(EMCC_GLUE_ARGS
 # ES6 WASM
 add_custom_command(
   OUTPUT ${EXE_NAME}.wasm.js ${EXE_NAME}.wasm.wasm
-  COMMAND emcc lib${EXE_NAME}.a ${EMCC_WASM_ESM_ARGS} -o ${EXE_NAME}.wasm.js
+  COMMAND emcc --bind -Wl,--no-whole-archive lib${EXE_NAME}.a ${EMCC_WASM_ESM_ARGS} -o ${EXE_NAME}.wasm.js -Wl,--no-whole-archive
   DEPENDS  ${EXE_NAME}
   COMMENT "Building ${EXE_NAME} webassembly"
   VERBATIM)
