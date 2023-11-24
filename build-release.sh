@@ -1,10 +1,12 @@
-#!/bin/bash
-rm -rf wasm_build
-cmake .  -B ./build/release -DTARGET_BUILD_PLATFORM=emscripten -DCMAKE_TOOLCHAIN_FILE=~/emsdk/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake --no-warn-unused-cli -DCMAKE_INSTALL_PREFIX=./install/emscripten/recastnavigation -DRECASTNAVIGATION_EXAMPLES=OFF -DRECASTNAVIGATION_TESTS=OFF -DRECASTNAVIGATION_DEMO=OFF -DCMAKE_BUILD_TYPE=release -DCMAKE_CROSSCOMPILING_EMULATOR=/home/ubuntu/emsdk/node/16.20.0_64bit/bin/node
-cd ./build/release
-emmake make -j4
-make install
-cd ../../
-mkdir wasm_build
-cd wasm_build
-cp ../install/emscripten/recastnavigation/bin/recastnavigation.release.js .
+#!/bin/sh
+
+mkdir -p ./build
+mkdir -p dist
+
+
+emcmake cmake -B build -S EmscriptenBindings -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+
+
+
+cp ./build/recast-navigation.* ./dist/
