@@ -105,7 +105,7 @@ set(EMCC_GLUE_ARGS
 add_custom_command(
   OUTPUT ${EXE_NAME}.wasm.js ${EXE_NAME}.wasm.wasm
   COMMAND emcc lib${EXE_NAME}.a ${EMCC_WASM_ESM_ARGS} -o ${EXE_NAME}.wasm.js
-  DEPENDS ${EXE_NAME}-bindings ${EXE_NAME}
+  #DEPENDS ${EXE_NAME}-bindings ${EXE_NAME}
   COMMENT "Building ${EXE_NAME} webassembly"
   VERBATIM)
 add_custom_target(${EXE_NAME}-wasm ALL DEPENDS ${EXE_NAME}.wasm.js ${EXE_NAME}.wasm.wasm)
