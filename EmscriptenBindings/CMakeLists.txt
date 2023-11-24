@@ -66,7 +66,7 @@ set(EMCC_ARGS
   -s NO_EXIT_RUNTIME=1
   -s NO_FILESYSTEM=1
   -s FILESYSTEM=0
-  -s EXPORT_ES6=1
+  #-s EXPORT_ES6=1
   -s BINARYEN_IGNORE_IMPLICIT_TRAPS=1 
   # Start: Uncomment for debugging
   # -O0
