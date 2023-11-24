@@ -53,7 +53,7 @@ set(EMCC_ARGS
   #-fno-rtti
   -flto
   #--extern-pre-js ${RECAST_FRONT_MATTER_FILE}
-  #--post-js glue.js
+  --post-js glue.js
   -O3
   -s INITIAL_MEMORY=67108864 # 64*1024*1024 = 64MB
   -s ALLOW_MEMORY_GROWTH=1
@@ -102,10 +102,18 @@ set(EMCC_GLUE_ARGS
   #-include${ENTRY_HEADER_FILE}
 )
 
+add_custom_command(
+  OUTPUT glue.o
+  COMMAND emcc --bind ${SRC_FILES} ${EMCC_GLUE_ARGS} -o glue.o
+  DEPENDS glue.cpp
+  COMMENT "Building ${EXE_NAME} bindings"
+  VERBATIM)
+add_custom_target(${EXE_NAME}-bindings ALL DEPENDS glue.js glue.o)
+
 # ES6 WASM
 add_custom_command(
   OUTPUT ${EXE_NAME}.wasm.js ${EXE_NAME}.wasm.wasm
-  COMMAND emcc --bind -Wl,--no-whole-archive lib${EXE_NAME}.a ${EMCC_WASM_COMPAT_ESM_ARGS} -o ${EXE_NAME}.wasm.js -Wl,--no-whole-archive
+  COMMAND emcc --bind -Wl,--no-whole-archive glue.o lib${EXE_NAME}.a ${EMCC_WASM_ESM_ARGS} -o ${EXE_NAME}.wasm.js -Wl,--no-whole-archive
   DEPENDS  ${EXE_NAME}
   COMMENT "Building ${EXE_NAME} webassembly"
   VERBATIM)
