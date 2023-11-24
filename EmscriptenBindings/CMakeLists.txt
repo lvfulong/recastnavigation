@@ -108,7 +108,7 @@ add_custom_command(
   DEPENDS glue.cpp
   COMMENT "Building ${EXE_NAME} bindings"
   VERBATIM)
-add_custom_target(${EXE_NAME}-bindings ALL DEPENDS glue.cpp)
+add_custom_target(${EXE_NAME}-bindings)
 
 # ES6 WASM
 add_custom_command(
