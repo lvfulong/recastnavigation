@@ -105,7 +105,7 @@ set(EMCC_GLUE_ARGS
 # ES6 WASM
 add_custom_command(
   OUTPUT ${EXE_NAME}.wasm.js ${EXE_NAME}.wasm.wasm
-  COMMAND emcc --bind -Wl,--no-whole-archive lib${EXE_NAME}.a ${EMCC_WASM_ESM_ARGS} -o ${EXE_NAME}.wasm.js -Wl,--no-whole-archive
+  COMMAND emcc --bind lib${EXE_NAME}.a ${EMCC_WASM_ESM_ARGS} -o ${EXE_NAME}.wasm.js
   DEPENDS  ${EXE_NAME}
   COMMENT "Building ${EXE_NAME} webassembly"
   VERBATIM)
