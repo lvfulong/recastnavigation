@@ -58,8 +58,8 @@ set(EMCC_ARGS
   -s INITIAL_MEMORY=67108864 # 64*1024*1024 = 64MB
   -s ALLOW_MEMORY_GROWTH=1
   -s ALLOW_TABLE_GROWTH=1
-  -s EXPORTED_FUNCTIONS=["_malloc","_free"]
-  -s EXPORTED_RUNTIME_METHODS=["UTF8ToString","addFunction"]
+  #-s EXPORTED_FUNCTIONS=["_malloc","_free"]
+  #-s EXPORTED_RUNTIME_METHODS=["UTF8ToString","addFunction"]
   -s EXPORT_NAME="Recast"
   -s MODULARIZE=1
   -s ENVIRONMENT='web'
