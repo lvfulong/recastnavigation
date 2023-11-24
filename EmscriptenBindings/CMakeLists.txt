@@ -108,13 +108,13 @@ add_custom_command(
   DEPENDS glue.cpp
   COMMENT "Building ${EXE_NAME} bindings"
   VERBATIM)
-add_custom_target(${EXE_NAME}-bindings ALL DEPENDS glue.js glue.o)
+add_custom_target(${EXE_NAME}-bindings ALL DEPENDS glue.cpp)
 
 # ES6 WASM
 add_custom_command(
   OUTPUT ${EXE_NAME}.wasm.js ${EXE_NAME}.wasm.wasm
   COMMAND emcc --bind -Wl,--no-whole-archive glue.o lib${EXE_NAME}.a ${EMCC_WASM_ESM_ARGS} -o ${EXE_NAME}.wasm.js -Wl,--no-whole-archive
-  DEPENDS  ${EXE_NAME}
+  DEPENDS  ${EXE_NAME}-bindings ${EXE_NAME}
   COMMENT "Building ${EXE_NAME} webassembly"
   VERBATIM)
 add_custom_target(${EXE_NAME}-wasm ALL DEPENDS ${EXE_NAME}.wasm.js ${EXE_NAME}.wasm.wasm)
