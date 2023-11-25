@@ -54,48 +54,6 @@ SET(EXE_NAME "recast-navigation")
 # Build Release by default
 set(CMAKE_BUILD_TYPE Release CACHE STRING "Build Type")
 
-set(EMCC_ARGS
---bind
-  #-fno-rtti
-  -flto
-  #--extern-pre-js ${RECAST_FRONT_MATTER_FILE}
-  #--post-js glue.js
-  #-O3
-  -s INITIAL_MEMORY=67108864 # 64*1024*1024 = 64MB
-  -s ALLOW_MEMORY_GROWTH=1
-  -s ALLOW_TABLE_GROWTH=1
-  #-s EXPORTED_FUNCTIONS=["_malloc","_free"]
-  #-s EXPORTED_RUNTIME_METHODS=["UTF8ToString","addFunction"]
-  -s EXPORT_NAME="Recast"
-  -s MODULARIZE=1
-  #-s ENVIRONMENT='web'
-  -s NO_EXIT_RUNTIME=1
-  -s NO_FILESYSTEM=1
-  #-s FILESYSTEM=0
-  #-s EXPORT_ES6=1
-  #-s BINARYEN_IGNORE_IMPLICIT_TRAPS=1 
-  # Start: Uncomment for debugging
-  # -O0
-  # -g
-  # -s ASSERTIONS=2
-  # End: Uncomment for debugging
-)
-
-if(${CLOSURE})
-  LIST(APPEND EMCC_ARGS
-    --closure 1
-    -s IGNORE_CLOSURE_COMPILER_ERRORS=1)
-else()
-  LIST(APPEND EMCC_ARGS
-    -s NO_DYNAMIC_EXECUTION=1)
-endif()
-
-set(EMCC_WASM_ESM_ARGS ${EMCC_ARGS}
-  -s WASM=1)
-
-set(EMCC_WASM_COMPAT_ESM_ARGS ${EMCC_ARGS}
-  -s SINGLE_FILE=1
-  -s WASM=1)
 
 set(EMCC_GLUE_ARGS
   -c
