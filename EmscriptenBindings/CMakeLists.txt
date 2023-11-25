@@ -18,15 +18,19 @@ set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 file(GLOB_RECURSE SRC_FILES
-    ${CMAKE_SOURCE_DIR}/*.h
-    ${CMAKE_SOURCE_DIR}/*.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/*.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp
 )
 
 file(GLOB_RECURSE RECASTDETOUR_FILES
-    ${CMAKE_SOURCE_DIR}/../Detour/*
-    ${CMAKE_SOURCE_DIR}/../DetourCrowd/*
-    ${CMAKE_SOURCE_DIR}/../DetourTileCache/*
-    ${CMAKE_SOURCE_DIR}/../Recast/*
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Detour/Include/*.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Detour/Source/*.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../DetourCrowd/Include/*.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../DetourCrowd/Source/*.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../DetourTileCache/Include/*.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../DetourTileCache/Source/*.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Recast/Include/*.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Recast/Source/*.cpp
     #${CMAKE_SOURCE_DIR}/../RecastDemo/Source/ChunkyTriMesh.cpp
     #${CMAKE_SOURCE_DIR}/../RecastDemo/Contrib/fastlz/fastlz.c
 )
@@ -44,17 +48,19 @@ include_directories(
 
 SET(EXE_NAME "recast-navigation")
 
-ADD_LIBRARY(${EXE_NAME} ${SRC_FILES} ${RECASTDETOUR_FILES})
+#ADD_LIBRARY(${EXE_NAME} ${SRC_FILES} ${RECASTDETOUR_FILES})
+
 
 # Build Release by default
 set(CMAKE_BUILD_TYPE Release CACHE STRING "Build Type")
 
 set(EMCC_ARGS
+--bind
   #-fno-rtti
   -flto
   #--extern-pre-js ${RECAST_FRONT_MATTER_FILE}
   #--post-js glue.js
-  -O3
+  #-O3
   -s INITIAL_MEMORY=67108864 # 64*1024*1024 = 64MB
   -s ALLOW_MEMORY_GROWTH=1
   -s ALLOW_TABLE_GROWTH=1
@@ -63,8 +69,8 @@ set(EMCC_ARGS
   -s EXPORT_NAME="Recast"
   -s MODULARIZE=1
   #-s ENVIRONMENT='web'
-  #-s NO_EXIT_RUNTIME=1
-  #-s NO_FILESYSTEM=1
+  -s NO_EXIT_RUNTIME=1
+  -s NO_FILESYSTEM=1
   #-s FILESYSTEM=0
   #-s EXPORT_ES6=1
   #-s BINARYEN_IGNORE_IMPLICIT_TRAPS=1 
@@ -102,12 +108,14 @@ set(EMCC_GLUE_ARGS
   #-include${ENTRY_HEADER_FILE}
 )
 
-# ES6 WASM
-add_custom_command(
-  OUTPUT ${EXE_NAME}.wasm.js ${EXE_NAME}.wasm.wasm
-  COMMAND emcc --bind lib${EXE_NAME}.a ${EMCC_WASM_ESM_ARGS} -o ${EXE_NAME}.wasm.js
-  DEPENDS  ${EXE_NAME}
-  COMMENT "Building ${EXE_NAME} webassembly"
-  VERBATIM)
-add_custom_target(${EXE_NAME}-wasm ALL DEPENDS ${EXE_NAME}.wasm.js ${EXE_NAME}.wasm.wasm)
 
+#set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${EMCC_WASM_ESM_ARGS}")
+#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${EMCC_WASM_ESM_ARGS}")
+
+add_executable(${EXE_NAME} ${SRC_FILES} ${RECASTDETOUR_FILES})
+#set_target_properties(${EXE_NAME}  PROPERTIES CXX_STANDARD 17)
+#target_compile_options(${EXE_NAME}  PUBLIC "$<$<BOOL:${MSVC}>:/permissive->")
+#target_link_options(${EXE_NAME}  PUBLIC "--bind -s EXPORT_NAME=Recast -s MODULARIZE=1")
+set_target_properties(${EXE_NAME} PROPERTIES
+	LINK_FLAGS "--bind -s EXPORT_NAME=Recast -s MODULARIZE=1"
+)
