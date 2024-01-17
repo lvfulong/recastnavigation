@@ -6,6 +6,9 @@
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <cstdint>
+#include <cstring>
+#include <math.h>
 
 #include "DetourNavMesh.h"
 #include "DetourNavMeshQuery.h"
@@ -13,9 +16,13 @@
 #include "DetourCrowd.h"
 #include "DetourNavMeshBuilder.h"
 #include "Recast.h"
-#include "NavMeshObstacls.h"
+#include "LayaOffMeshConnection.h"
+#include "NavTileCache.h"
+#include "LayaConvexVolume.h"
 
 using namespace emscripten;
+
+typedef std::array<float, 3> Vec3;
 
 static float frand()
 {
@@ -69,48 +76,6 @@ class dtRefPointData
 public:
     dtPolyRef dtpolyRef;
     float data[3];
-    float getx()
-    {
-        return data[0];
-    }
-    float gety()
-    {
-        return data[1];
-    }
-    float getz()
-    {
-        return data[2];
-    }
-
-    void setx(float value)
-    {
-        data[0] = value;
-    }
-
-    void sety(float value)
-    {
-        data[1] = value;
-    }
-
-    void setz(float value)
-    {
-        data[2] = value;
-    }
-
-    dtPolyRef getployRef()
-    {
-        return dtpolyRef;
-    }
-    val getData()
-    {
-        return CreateArray(data, 3);
-    }
-    void setData(float x, float y, float z)
-    {
-        data[0] = x;
-        data[1] = y;
-        data[2] = z;
-    }
 };
 
 int dtMergeCorridorStartMoved(dtPolyRef *path, const int npath, const int maxPath,
@@ -235,16 +200,42 @@ struct TitleConfig
     float bmin[3];
     float bmax[3];
     int partitionType;
-    int triVertexCount;
-    int triCount;
-    int triFlagCount;
+
     float agentHeight;
     float agentRadius;
     float agentMaxClimb;
-    dtPolyRef triVertexOff;
-    dtPolyRef triIndexOff;
-    dtPolyRef triFlagOff;
 };
+
+inline unsigned int nextPow2(unsigned int v)
+{
+    v--;
+    v |= v >> 1;
+    v |= v >> 2;
+    v |= v >> 4;
+    v |= v >> 8;
+    v |= v >> 16;
+    v++;
+    return v;
+}
+
+inline unsigned int ilog2(unsigned int v)
+{
+    unsigned int r;
+    unsigned int shift;
+    r = (v > 0xffff) << 4;
+    v >>= r;
+    shift = (v > 0xff) << 3;
+    v >>= shift;
+    r |= shift;
+    shift = (v > 0xf) << 2;
+    v >>= shift;
+    r |= shift;
+    shift = (v > 0x3) << 1;
+    v >>= shift;
+    r |= shift;
+    r |= (v >> 1);
+    return r;
+}
 
 enum PartitionType
 {
@@ -253,21 +244,59 @@ enum PartitionType
     PARTITION_LAYERS
 };
 
-unsigned char *creatNavMeshData(rcConfig m_cfg, TitleConfig titleconfig, int data_ptr, int &dataSize, LayaOffMeshConnection *linkMesh)
+unsigned char *creatNavMeshData(rcConfig m_cfg, TitleConfig titleconfig, val datas, int &dataSize, LayaOffMeshConnection *linkMesh, LayaConvexVolume *volumes)
 {
-    double start = emscripten_get_now();
-    float *verts = reinterpret_cast<float *>(data_ptr + titleconfig.triVertexOff);
-    const int nverts = titleconfig.triVertexCount;
-    int *tris = reinterpret_cast<int *>(data_ptr + titleconfig.triIndexOff);
-    const int ntris = titleconfig.triCount;
-    uint8_t *triFlag = reinterpret_cast<uint8_t *>(data_ptr + titleconfig.triFlagOff);
+    m_cfg.walkableClimb = dtMax((int)ceilf(titleconfig.agentMaxClimb / m_cfg.ch), 1);
+    m_cfg.walkableHeight = (int)ceilf(titleconfig.agentHeight / m_cfg.ch);
+    m_cfg.walkableRadius = (int)ceilf(titleconfig.agentRadius / m_cfg.cs);
+    m_cfg.maxEdgeLen = (int)ceilf(17.0f / m_cfg.cs);
+    m_cfg.minRegionArea = (int)rcSqr(8); // Note: area = size*size
+    m_cfg.mergeRegionArea = (int)rcSqr(10);
+    m_cfg.borderSize = m_cfg.walkableRadius + 2;
+    m_cfg.width = m_cfg.tileSize + m_cfg.borderSize * 2;
+    m_cfg.height = m_cfg.tileSize + m_cfg.borderSize * 2;
+    m_cfg.maxSimplificationError = 1.5f;
+    m_cfg.detailSampleDist = dtMax(m_cfg.cs * 10.0f, 0.9f);
+    m_cfg.detailSampleMaxError = m_cfg.ch;
+    m_cfg.maxVertsPerPoly = 6.0f;
+    // double start = emscripten_get_now();
+    const std::vector<NavTileCache> dataVec = vecFromJSArray<NavTileCache>(datas);
+    int nverts = 0;
+    int ntris = 0;
+    int triFlagCount = 0;
+    for (auto iter : dataVec)
+    {
+        nverts += iter.getTriVertexCount();
+        ntris += iter.getTriIndexCount();
+        triFlagCount += iter.getTriFlagCount();
+    }
 
-    // float *offMeshVerts = reinterpret_cast<float *>(data_ptr + titleconfig.offMeshVertsOff);
-    // float *offMeshRads = reinterpret_cast<float *>(data_ptr + titleconfig.offMeshRadsOff);
-    // unsigned char *offMeshDirs = reinterpret_cast<unsigned char *>(data_ptr + titleconfig.offMeshDirsOff);
-    // unsigned char *offMeshAreas = reinterpret_cast<unsigned char *>(data_ptr + titleconfig.offMeshAreasOff);
-    // const unsigned short *offMeshFlags = reinterpret_cast<unsigned short *>(data_ptr + titleconfig.offMeshFlagsOff);
-    // unsigned int *offMeshIds = reinterpret_cast<unsigned int *>(data_ptr + titleconfig.offMeshIdOff);
+    float *verts = new float[nverts];
+    int *tris = new int[ntris];
+    uint8_t *triFlag = new uint8_t[triFlagCount];
+    nverts = 0;
+    ntris = 0;
+    triFlagCount = 0;
+    for (auto iter : dataVec)
+    {
+        memcpy(&verts[nverts], iter.getVerts(), sizeof(float) * iter.getTriVertexCount());
+        memcpy(&triFlag[triFlagCount], iter.getFlags(), sizeof(uint8_t) * iter.getTriFlagCount());
+        memcpy(&tris[ntris], iter.getTris(), sizeof(int) * iter.getTriIndexCount());
+        int vertsCount = nverts / 3;
+        if (vertsCount > 0)
+        {
+            int triCount = iter.getTriIndexCount();
+            for (int i = 0; i < triCount; i++)
+            {
+                tris[ntris + i] += vertsCount;
+            }
+        }
+        nverts += iter.getTriVertexCount();
+        triFlagCount += iter.getTriFlagCount();
+        ntris += iter.getTriIndexCount();
+    }
+    ntris /= 3;
+
     rcContext m_ctx;
     rcVcopy(m_cfg.bmin, titleconfig.bmin);
     rcVcopy(m_cfg.bmax, titleconfig.bmax);
@@ -291,6 +320,13 @@ unsigned char *creatNavMeshData(rcConfig m_cfg, TitleConfig titleconfig, int dat
         return 0;
     }
 
+    delete[] verts;
+    delete[] tris;
+    delete[] triFlag;
+    verts = 0;
+    tris = 0;
+    triFlag = 0;
+
     rcFilterLowHangingWalkableObstacles(&m_ctx, m_cfg.walkableClimb, *solid);
     rcFilterLedgeSpans(&m_ctx, m_cfg.walkableHeight, m_cfg.walkableClimb, *solid);
     rcFilterWalkableLowHeightSpans(&m_ctx, m_cfg.walkableHeight, *solid);
@@ -311,6 +347,12 @@ unsigned char *creatNavMeshData(rcConfig m_cfg, TitleConfig titleconfig, int dat
     if (!rcErodeWalkableArea(&m_ctx, m_cfg.walkableRadius, *m_chf))
     {
         return 0;
+    }
+
+    for (int i = 0; i < volumes->m_ConvexCount; i++)
+    {
+        // rcMarkConvexPolyArea(&m_ctx, &volumes->m_verts[i * 12], 4, volumes->m_hmin[i], volumes->m_hmax[i], volumes->m_area[i], *m_chf);
+        rcMarkConvexVolume(&m_ctx, volumes, i, *m_chf);
     }
 
     if (titleconfig.partitionType == PARTITION_WATERSHED)
@@ -388,7 +430,7 @@ unsigned char *creatNavMeshData(rcConfig m_cfg, TitleConfig titleconfig, int dat
         // Update poly flags from areas.
         for (int i = 0; i < m_pmesh->npolys; ++i)
         {
-            m_pmesh->flags[i] = m_pmesh->areas[i];
+            m_pmesh->flags[i] = 1 << m_pmesh->areas[i];
         }
 
         dtNavMeshCreateParams params;
@@ -416,7 +458,7 @@ unsigned char *creatNavMeshData(rcConfig m_cfg, TitleConfig titleconfig, int dat
         params.offMeshConCount = linkMesh->m_offMeshConCount;
         params.walkableHeight = titleconfig.agentHeight;
         params.walkableRadius = titleconfig.agentRadius;
-        params.walkableClimb = titleconfig.agentMaxClimb;
+        params.walkableClimb = m_cfg.walkableClimb * m_cfg.ch;
         rcVcopy(params.bmin, m_pmesh->bmin);
         rcVcopy(params.bmax, m_pmesh->bmax);
         params.cs = m_cfg.cs;
@@ -443,34 +485,75 @@ EMSCRIPTEN_BINDINGS(recastnavigation)
     function("dtFreeNavMeshQuery", dtFreeNavMeshQuery, allow_raw_pointers());
     function("dtFreeNavMesh", dtFreeNavMesh, allow_raw_pointers());
     function("dtFreeCrowd", dtFreeCrowd, allow_raw_pointers());
+    function("dtFree", dtFree, allow_raw_pointers());
 
-    value_array<std::array<float, 3>>("array_float_3")
+    value_array<Vec3>("Vec3")
         .element(emscripten::index<0>())
         .element(emscripten::index<1>())
         .element(emscripten::index<2>());
+
+    value_object<dtRefPointData>("dtRefPointData")
+        .field("polyRef", &dtRefPointData::dtpolyRef)
+        .field("data", &dtRefPointData::data);
+
     class_<LayaOffMeshConnection>("dtOffMeshConnection")
         .constructor<>()
         .function("addOffMeshConnection", &LayaOffMeshConnection::addOffMeshConnection, allow_raw_pointers())
         .function("deleteOffMeshConnection", &LayaOffMeshConnection::deleteOffMeshConnection);
 
+    class_<LayaConvexVolume>("dtConvexVolume")
+        .constructor<>()
+        .function("addCovexVoume", optional_override([](LayaConvexVolume *volume, val data, val trans, unsigned char area)
+                                                     {
+                                                            const std::vector<float> dataVec = convertJSArrayToNumberVector<float>(data);
+                                                            const std::vector<float> transVec = convertJSArrayToNumberVector<float>(trans);
+                                                            return volume->addCovexVoume(dataVec.data(), transVec.data(),area); }),
+                  allow_raw_pointers())
+        .function("updateCovexVoume", optional_override([](LayaConvexVolume *volume, int id, val data, val trans, unsigned char area)
+                                                        {
+                                                            const std::vector<float> dataVec = convertJSArrayToNumberVector<float>(data);
+                                                            const std::vector<float> transVec = convertJSArrayToNumberVector<float>(trans);
+                                                            volume->updateCovexVoume(id, dataVec.data(), transVec.data(), area); }),
+                  allow_raw_pointers())
+        .function("deleteCovexVoume", &LayaConvexVolume::deleteCovexVoume);
+
+    class_<NavTileData>("dtNavTileData")
+        .constructor<>()
+        .function("setTriVertex", optional_override([](NavTileData *titleData, val data)
+                                                    { const std::vector<float> dataVec = convertJSArrayToNumberVector<float>(data);
+                                                        titleData->setTriVertex(dataVec.data(),dataVec.size()); }),
+                  allow_raw_pointers())
+        .function("setTriIndex", optional_override([](NavTileData *titleData, val data)
+                                                   { const std::vector<int> dataVec = convertJSArrayToNumberVector<int>(data);
+                                                    titleData->setTriIndex(dataVec.data(), dataVec.size()); }),
+                  allow_raw_pointers())
+        .function("setTriFlag", optional_override([](NavTileData *titleData, val data)
+                                                  { const std::vector<uint8_t> dataVec = convertJSArrayToNumberVector<uint8_t>(data);
+        titleData->setTriFlag(dataVec.data(), dataVec.size()); }),
+                  allow_raw_pointers());
+
+    class_<NavTileCache>("dtNavTileCache")
+        .constructor<>()
+        .function("init", &NavTileCache::init, allow_raw_pointers())
+        .function("setFlag", &NavTileCache::setFlag)
+        .function("getTriIndexCount", &NavTileCache::getTriIndexCount)
+        .function("getTriVertexCount", &NavTileCache::getTriVertexCount)
+        .function("getVerts", optional_override([](NavTileCache *cache)
+                                                { return CreateArrayView<float>(cache->getVerts(), cache->getTriVertexCount()); }),
+                  allow_raw_pointers())
+        .function("getTris", optional_override([](NavTileCache *cache)
+                                               { return CreateArrayView<int>(cache->getTris(), cache->getTriIndexCount()); }),
+                  allow_raw_pointers())
+        .function("transfromData", optional_override([](NavTileCache *cache, val data)
+                                                     { const std::vector<float> dataVec = convertJSArrayToNumberVector<float>(data);
+                                                        cache->transfromData(dataVec.data()); }),
+                  allow_raw_pointers());
+
     value_object<rcConfig>("rcConfig")
-        .field("width", &rcConfig::width)
-        .field("height", &rcConfig::height)
         .field("tileSize", &rcConfig::tileSize)
-        .field("borderSize", &rcConfig::borderSize)
-        .field("cs", &rcConfig::cs)
-        .field("ch", &rcConfig::ch)
-        .field("walkableSlopeAngle", &rcConfig::walkableSlopeAngle)
-        .field("walkableHeight", &rcConfig::walkableHeight)
-        .field("walkableClimb", &rcConfig::walkableClimb)
-        .field("walkableRadius", &rcConfig::walkableRadius)
-        .field("maxEdgeLen", &rcConfig::maxEdgeLen)
-        .field("maxSimplificationError", &rcConfig::maxSimplificationError)
-        .field("minRegionArea", &rcConfig::minRegionArea)
-        .field("mergeRegionArea", &rcConfig::mergeRegionArea)
-        .field("maxVertsPerPoly", &rcConfig::maxVertsPerPoly)
-        .field("detailSampleDist", &rcConfig::detailSampleDist)
-        .field("detailSampleMaxError", &rcConfig::detailSampleMaxError);
+        .field("cellSize", &rcConfig::cs)
+        .field("cellHeight", &rcConfig::ch)
+        .field("agentMaxSlope", &rcConfig::walkableSlopeAngle);
 
     value_object<TitleConfig>("TitleConfig")
         .field("tx", &TitleConfig::tx)
@@ -478,15 +561,9 @@ EMSCRIPTEN_BINDINGS(recastnavigation)
         .field("bmin", &TitleConfig::bmin)
         .field("bmax", &TitleConfig::bmax)
         .field("partitionType", &TitleConfig::partitionType)
-        .field("triCount", &TitleConfig::triCount)
-        .field("triVertexCount", &TitleConfig::triVertexCount)
-        .field("triFlagCount", &TitleConfig::triFlagCount)
         .field("agentHeight", &TitleConfig::agentHeight)
         .field("agentRadius", &TitleConfig::agentRadius)
-        .field("agentMaxClimb", &TitleConfig::agentMaxClimb)
-        .field("triVertexOff", &TitleConfig::triVertexOff)
-        .field("triIndexOff", &TitleConfig::triIndexOff)
-        .field("triFlagOff", &TitleConfig::triFlagOff);
+        .field("agentMaxClimb", &TitleConfig::agentMaxClimb);
 
     enum_<dtStraightPathFlags>("dtStraightPathFlags")
         .value("DT_STRAIGHTPATH_START", DT_STRAIGHTPATH_START)
@@ -585,34 +662,58 @@ EMSCRIPTEN_BINDINGS(recastnavigation)
 
     class_<dtCrowd>("dtCrowd")
         .constructor<>()
-        .function("init", &dtCrowd::init, allow_raw_pointers())
-        .function("addAgent", optional_override([](dtCrowd &btcrowd, std::array<float, 3> pos, dtCrowdAgentParams &params)
+        .function("init", optional_override([](dtCrowd &crowd, const int maxAgents, const float maxAgentRadius, dtNavMesh *nav)
+                                            { bool res = crowd.init(maxAgents, maxAgentRadius, nav);
+                                                // Setup local avoidance params to different qualities.
+                                                dtObstacleAvoidanceParams params;
+                                                // Use mostly default settings, copy from dtCrowd.
+                                                memcpy(&params, crowd.getObstacleAvoidanceParams(0), sizeof(dtObstacleAvoidanceParams));
+
+                                                // Low (11)
+                                                params.velBias = 0.5f;
+                                                params.adaptiveDivs = 5;
+                                                params.adaptiveRings = 2;
+                                                params.adaptiveDepth = 1;
+                                                crowd.setObstacleAvoidanceParams(0, &params);
+
+                                                // Medium (22)
+                                                params.velBias = 0.5f;
+                                                params.adaptiveDivs = 5;
+                                                params.adaptiveRings = 2;
+                                                params.adaptiveDepth = 2;
+                                                crowd.setObstacleAvoidanceParams(1, &params);
+
+                                                // Good (45)
+                                                params.velBias = 0.5f;
+                                                params.adaptiveDivs = 7;
+                                                params.adaptiveRings = 2;
+                                                params.adaptiveDepth = 3;
+                                                crowd.setObstacleAvoidanceParams(2, &params);
+
+                                                // High (66)
+                                                params.velBias = 0.5f;
+                                                params.adaptiveDivs = 7;
+                                                params.adaptiveRings = 3;
+                                                params.adaptiveDepth = 3;
+
+                                                crowd.setObstacleAvoidanceParams(3, &params);
+                                                return res; }),
+                  allow_raw_pointers())
+        .function("addAgent", optional_override([](dtCrowd &btcrowd, Vec3 pos, dtCrowdAgentParams &params)
                                                 { return btcrowd.addAgent(pos.data(), &params); }))
         .function("removeAgent", optional_override([](dtCrowd &btcrowd, const int idx)
                                                    { return btcrowd.removeAgent(idx); }))
         .function("getAgent", &dtCrowd::getAgent, allow_raw_pointers())
         .function("getAgentCount", &dtCrowd::getAgentCount)
-        .function("requestMoveTarget", optional_override([](dtCrowd &btcrowd, const int idx, dtPolyRef ref, std::array<float, 3> pos)
-                                                         { return btcrowd.requestMoveTarget(idx, ref, pos.data()); }))
-        .function("requestMoveVelocity", optional_override([](dtCrowd &btcrowd, const int idx, std::array<float, 3> veldata)
+        .function("requestMoveTarget", optional_override([](dtCrowd &btcrowd, const int idx, dtRefPointData point)
+                                                         { return btcrowd.requestMoveTarget(idx, point.dtpolyRef, point.data); }))
+        .function("requestMoveVelocity", optional_override([](dtCrowd &btcrowd, const int idx, Vec3 veldata)
                                                            { return btcrowd.requestMoveVelocity(idx, veldata.data()); }))
         .function("getFilter", optional_override([](dtCrowd &btcrowd, const int i)
                                                  { return btcrowd.getEditableFilter(i); }),
                   allow_raw_pointers())
         .function("update", optional_override([](dtCrowd &btcrowd, const float dt)
                                               { btcrowd.update(dt, nullptr); }));
-
-    class_<dtRefPointData>("dtRefPointData")
-        .constructor<>()
-        .function("getployRef", &dtRefPointData::getployRef)
-        .function("getx", &dtRefPointData::getx)
-        .function("gety", &dtRefPointData::gety)
-        .function("getz", &dtRefPointData::getz)
-        .function("setx", &dtRefPointData::setx)
-        .function("sety", &dtRefPointData::sety)
-        .function("setz", &dtRefPointData::setz)
-        .function("getData", &dtRefPointData::getData)
-        .function("setData", &dtRefPointData::setData);
 
     register_vector<float>("dtFloatVector");
 
@@ -627,36 +728,60 @@ EMSCRIPTEN_BINDINGS(recastnavigation)
 
     class_<dtNavMesh>("dtNavMesh")
         .constructor<>()
-        .function("init", optional_override([](dtNavMesh &dtnaveMesh, dtNavMeshParams data)
-                                            { dtnaveMesh.init(&data); }))
-        .function("init", optional_override([](dtNavMesh &dtnaveMesh, int data_ptr, int size)
-                                            { 
-                                                unsigned char *data = reinterpret_cast<unsigned char *>(data_ptr);
-                                                dtnaveMesh.init(data, size, DT_TILE_FREE_DATA); }))
+        .function("init", optional_override([](dtNavMesh &dtnaveMesh, Vec3 min, Vec3 max, float cellsize, int tileSize)
+                                            {
+                                                int gw = 0, gh = 0;
+                                                const float *bmin = min.data();
+                                                const float *bmax = max.data();
+                                                rcCalcGridSize(bmin, bmax, cellsize, &gw, &gh);
+                                                const int tw = (gw + tileSize - 1) / tileSize;
+                                                const int th = (gh + tileSize - 1) / tileSize;
+                                                int tileBits = rcMin((int)ilog2(nextPow2(tw * th)), 14);
+                                                if (tileBits > 14)
+                                                    tileBits = 14;
+                                                int polyBits = 22 - tileBits;
+                                                dtNavMeshParams params;
+                                                rcVcopy(params.orig, bmin);
+                                                params.tileWidth = cellsize * tileSize;
+                                                params.tileHeight = cellsize * tileSize;
+                                                params.maxTiles = 1 << tileBits;
+                                                params.maxPolys = 1 << polyBits;
+                                                dtnaveMesh.init(&params); }))
         .function("getMaxTiles", &dtNavMesh::getMaxTiles)
-        .function("addTile", optional_override([](dtNavMesh &dtnaveMesh, rcConfig m_cfg, TitleConfig titleconfig, int data_ptr, LayaOffMeshConnection *linkMesh)
-                                               { 
+        .function("addTile", optional_override([](dtNavMesh &dtnaveMesh, rcConfig m_cfg, TitleConfig titleconfig, val data_ptr, LayaOffMeshConnection *linkMesh, LayaConvexVolume *volumes)
+                                               {
                                                     int navDataSize = 0;
-                                                    unsigned char *navData = creatNavMeshData(m_cfg, titleconfig, data_ptr, navDataSize, linkMesh);
-                                                    if (navData){
+                                                    unsigned char *navData = creatNavMeshData(m_cfg, titleconfig, data_ptr, navDataSize, linkMesh, volumes);
+                                                    if (navData)
+                                                    {
                                                         dtnaveMesh.addTile(navData, navDataSize, DT_TILE_FREE_DATA, 0, 0);
-                                                    }else
+                                                    }
+                                                    else
                                                     {
                                                         printf("fail tile\n");
                                                     } }),
                   allow_raw_pointers())
         .function("getTile", select_overload<const dtMeshTile *(int) const>(&dtNavMesh::getTile), allow_raw_pointers())
         .function("getTileRefAt", &dtNavMesh::getTileRefAt)
+        .function("getPolyFlags", optional_override([](dtNavMesh &dtnaveMesh, dtTileRef ref)
+                                                    {
+                                                        unsigned short flags = 0;
+                                                        dtnaveMesh.getPolyFlags(ref, &flags);
+                                                        return flags; }))
+        .function("getPolyArea", optional_override([](dtNavMesh &dtnaveMesh, dtTileRef ref)
+                                                   {
+                                                        unsigned char resultArea = 0;
+                                                        dtnaveMesh.getPolyArea(ref, &resultArea);
+                                                        return resultArea; }))
         .function("removeTile", optional_override([](dtNavMesh &dtnaveMesh, const int tx, const int ty)
                                                   { dtnaveMesh.removeTile(dtnaveMesh.getTileRefAt(tx, ty, 0), 0, 0); }))
-        .function("getOffMeshConnectionPolyEndPoints", optional_override([](dtNavMesh &dtnaveMesh, dtPolyRef prevRef, dtPolyRef polyRef,
-                                                                            val startPos, val endPos)
+        .function("getOffMeshConnectionPolyEndPoints", optional_override([](dtNavMesh &dtnaveMesh, dtPolyRef prevRef, dtPolyRef polyRef, val startPos, val endPos)
                                                                          {
                                                                             intptr_t startSize = 0;
                                                                             float *startPosData = GetArray<float>(startPos, &startSize);
                                                                             intptr_t endSize = 0;
                                                                             float *endPosData = GetArray<float>(endPos, &endSize);
-                                                                            dtStatus status = dtnaveMesh.getOffMeshConnectionPolyEndPoints(prevRef, polyRef,startPosData, endPosData);
+                                                                            dtStatus status = dtnaveMesh.getOffMeshConnectionPolyEndPoints(prevRef, polyRef, startPosData, endPosData);
                                                                             writeToArray(startPos, startPosData, startSize);
                                                                             free(startPosData);
                                                                             writeToArray(endPos, endPosData, endSize);
@@ -676,81 +801,96 @@ EMSCRIPTEN_BINDINGS(recastnavigation)
     class_<dtNavMeshQuery>("dtNavMeshQuery")
         .constructor<>()
         .function("init", &dtNavMeshQuery::init, allow_raw_pointers())
-        .function("getPolyHeight", optional_override([](dtNavMeshQuery &dtnavMeshQuery, dtPolyRef ref, std::array<float, 3> vecData)
+        .function("getPolyHeight", optional_override([](dtNavMeshQuery &dtnavMeshQuery, dtPolyRef ref, Vec3 vecData)
                                                      {
                                                         float h = 0;
                                                         dtStatus status = dtnavMeshQuery.getPolyHeight(ref, vecData.data(), &h);
                                                         auto out = val::object();
                                                         out.set("height", val(h));
                                                         out.set("Status", val(status));
-                                                        return out ; }))
+                                                        return out; }))
+        .function("findDistanceToWall", optional_override([](dtNavMeshQuery &dtnavMeshQuery, dtRefPointData refpoint, dtQueryFilter &filter_ptr, const float maxRadius)
+                                                          {
+                                                            float hitPos[3];
+                                                            float hitNormal[3];
+                                                            float hitdist;
+                                                            const dtQueryFilter *filter = (const dtQueryFilter *)&filter_ptr;
+                                                            dtStatus status = dtnavMeshQuery.findDistanceToWall(refpoint.dtpolyRef, refpoint.data, maxRadius, filter, &hitdist, &hitPos[0], &hitNormal[0]);
+                                                            auto out = val::object();
+                                                            out.set("dist", val(hitdist));
+                                                            out.set("pos", CreateArray<float>(&hitPos[0], 3));
+                                                            out.set("normal", CreateArray<float>(&hitNormal[0], 3));
+                                                            out.set("Status", val(status));
+                                                            return out; }))
         .function("findPath", optional_override([](dtNavMeshQuery &dtnavMeshQuery,
                                                    dtRefPointData &startdata, dtRefPointData &enddata, dtQueryFilter &filter_ptr, int MAX_POLYS)
                                                 {
-                                                        const dtQueryFilter* filter = (const dtQueryFilter*)&filter_ptr;
-                                                        dtPolyRef m_polys[MAX_POLYS];
-                                                        int pathCount = 0;
-                                                        dtStatus status = dtnavMeshQuery.findPath(startdata.dtpolyRef, enddata.dtpolyRef, startdata.data, enddata.data, filter, m_polys, &pathCount, MAX_POLYS);
-                                                        auto out = val::object();
-                                                        out.set("Status", val(status));
-                                                        out.set("polys", CreateArray<dtPolyRef>(&m_polys[0], pathCount));
-                                                        return out ; }))
+                                                    const dtQueryFilter *filter = (const dtQueryFilter *)&filter_ptr;
+                                                    dtPolyRef m_polys[MAX_POLYS];
+                                                    int pathCount = 0;
+                                                    dtStatus status = dtnavMeshQuery.findPath(startdata.dtpolyRef, enddata.dtpolyRef, startdata.data, enddata.data, filter, m_polys, &pathCount, MAX_POLYS);
+                                                    auto out = val::object();
+                                                    out.set("Status", val(status));
+                                                    out.set("polys", CreateArray<dtPolyRef>(&m_polys[0], pathCount));
+                                                    return out; }))
         .function("closestPointOnPoly", optional_override([](dtNavMeshQuery &dtnavMeshQuery, dtPolyRef ref, val data)
                                                           {
-                                                        const std::vector<float>& vecData = convertJSArrayToNumberVector<float>(data);
-                                                        float iterPos[3];
-                                                        dtnavMeshQuery.closestPointOnPoly(ref, vecData.data(), iterPos, 0);
-                                                        return CreateArray<float>(&iterPos[0], 3); }))
-        .function("closestPointOnPolyByRefPointData", optional_override([](dtNavMeshQuery &dtnavMeshQuery, dtRefPointData *refdata)
+                                                                const std::vector<float> &vecData = convertJSArrayToNumberVector<float>(data);
+                                                                float iterPos[3];
+                                                                dtnavMeshQuery.closestPointOnPoly(ref, vecData.data(), iterPos, 0);
+                                                                return CreateArray<float>(&iterPos[0], 3); }))
+        .function("closestPointOnPolyByRefPointData", optional_override([](dtNavMeshQuery &dtnavMeshQuery, dtRefPointData refdata)
                                                                         {
-                                                        float iterPos[3];
-                                                        dtnavMeshQuery.closestPointOnPoly(refdata->dtpolyRef, refdata->data, iterPos, 0);
-                                                        return CreateArray<float>(&iterPos[0], 3); }),
+                                                                            float iterPos[3];
+                                                                            dtnavMeshQuery.closestPointOnPoly(refdata.dtpolyRef, refdata.data, iterPos, 0);
+                                                                            return CreateArray<float>(&iterPos[0], 3); }),
                   allow_raw_pointers())
         .function("findStraightPath", optional_override([](dtNavMeshQuery &dtnavMeshQuery,
-                                                           std::array<float, 3> startPos, std::array<float, 3> endPos,
+                                                           Vec3 startPos, Vec3 endPos,
                                                            val path, int pathSize, const int maxStraightPath)
                                                         {
-                                                            float steerPath[maxStraightPath*3];
-                                                            unsigned char steerPathFlags[maxStraightPath];
-                                                            dtPolyRef steerPathPolys[maxStraightPath];
-                                                            int nsteerPath = 0;
-                                                            const std::vector<dtPolyRef> &pathData = convertJSArrayToNumberVector<dtPolyRef>(path);
-                                                            dtnavMeshQuery.findStraightPath(startPos.data(), endPos.data(), pathData.data(), pathSize,
-                                                                                            steerPath, steerPathFlags, steerPathPolys, &nsteerPath, maxStraightPath);
-                                                            auto out = val::object();
-                                                            out.set("steerPath", CreateArray<float>(&steerPath[0], maxStraightPath * 3));
-                                                            out.set("steerPathPolys", CreateArray<dtPolyRef>(&steerPathPolys[0], maxStraightPath));
-                                                            out.set("steerPathFlags", CreateArray<unsigned char>(&steerPathFlags[0], maxStraightPath));
-                                                            out.set("nsteerPath", val(nsteerPath));
-                                                            return out; }))
+                                                                float steerPath[maxStraightPath * 3];
+                                                                unsigned char steerPathFlags[maxStraightPath];
+                                                                dtPolyRef steerPathPolys[maxStraightPath];
+                                                                int nsteerPath = 0;
+                                                                const std::vector<dtPolyRef> &pathData = convertJSArrayToNumberVector<dtPolyRef>(path);
+                                                                dtnavMeshQuery.findStraightPath(startPos.data(), endPos.data(), pathData.data(), pathSize,
+                                                                                                steerPath, steerPathFlags, steerPathPolys, &nsteerPath, maxStraightPath);
+                                                                auto out = val::object();
+                                                                out.set("steerPath", CreateArray<float>(&steerPath[0], maxStraightPath * 3));
+                                                                out.set("steerPathPolys", CreateArray<dtPolyRef>(&steerPathPolys[0], maxStraightPath));
+                                                                out.set("steerPathFlags", CreateArray<unsigned char>(&steerPathFlags[0], maxStraightPath));
+                                                                out.set("nsteerPath", val(nsteerPath));
+                                                                return out; }))
         .function("moveAlongSurface", optional_override([](dtNavMeshQuery &dtnavMeshQuery, dtPolyRef ref,
-                                                           std::array<float, 3> startPos, std::array<float, 3> endPos,
+                                                           Vec3 startPos, Vec3 endPos,
                                                            dtQueryFilter &filter_ptr, const int maxVisitedSize)
                                                         {
-                                                            const dtQueryFilter* filter = (const dtQueryFilter*)&filter_ptr;
-                                                            float result[3];
-                                                            dtPolyRef visited[maxVisitedSize];
-                                                            int nvisited = 0;
-                                                            dtStatus status = dtnavMeshQuery.moveAlongSurface(ref, startPos.data(), endPos.data(), filter, result, visited, &nvisited, maxVisitedSize);
-                                                            auto out = val::object();
-                                                            out.set("resultPos", CreateArray<float>(&result[0], 3));
-                                                            out.set("visited", CreateArrayView<dtPolyRef>(&visited[0], nvisited));
-                                                            out.set("status", val(status));
-                                                            return out; }))
+        const dtQueryFilter *filter = (const dtQueryFilter *)&filter_ptr;
+        float result[3];
+        dtPolyRef visited[maxVisitedSize];
+        int nvisited = 0;
+        dtStatus status = dtnavMeshQuery.moveAlongSurface(ref, startPos.data(), endPos.data(), filter, result, visited, &nvisited, maxVisitedSize);
+        auto out = val::object();
+        out.set("resultPos", CreateArray<float>(&result[0], 3));
+        out.set("visited", CreateArrayView<dtPolyRef>(&visited[0], nvisited));
+        out.set("status", val(status));
+        return out; }))
         .function("findNearestPoly", optional_override([](dtNavMeshQuery &dtnavMeshQuery,
-                                                          dtRefPointData &pointdata, std::array<float, 3> halfExtents, dtQueryFilter &filter_ptr)
+                                                          Vec3 &center, Vec3 halfExtents, dtQueryFilter &filter_ptr)
                                                        {
-                                                        const dtQueryFilter* filter = (const dtQueryFilter*)&filter_ptr;
-                                                        return dtnavMeshQuery.findNearestPoly(pointdata.data, halfExtents.data(), filter, &pointdata.dtpolyRef, 0); }))
+        const dtQueryFilter *filter = (const dtQueryFilter *)&filter_ptr;
+        dtRefPointData refpoint;
+        dtnavMeshQuery.findNearestPoly(center.data(), halfExtents.data(), filter, &refpoint.dtpolyRef, &refpoint.data[0]);
+        return refpoint; }))
         .function("findRandomPoint", optional_override([](dtNavMeshQuery &dtnavMeshQuery, dtQueryFilter &filter_ptr, dtRefPointData &randomdata)
                                                        {
-                                                        const dtQueryFilter* filter = (const dtQueryFilter*)&filter_ptr;
-                                                        return dtnavMeshQuery.findRandomPoint(filter, frand, &randomdata.dtpolyRef, randomdata.data); }))
+        const dtQueryFilter *filter = (const dtQueryFilter *)&filter_ptr;
+        return dtnavMeshQuery.findRandomPoint(filter, frand, &randomdata.dtpolyRef, randomdata.data); }))
         .function("findRandomPointAroundCircle", optional_override([](dtNavMeshQuery &dtnavMeshQuery,
                                                                       dtRefPointData &startPoint, float maxRadius,
                                                                       dtQueryFilter &filter_ptr, dtRefPointData &randomdata)
                                                                    {
-                                                                    const dtQueryFilter* filter = (const dtQueryFilter*)&filter_ptr;
-                                                                    return dtnavMeshQuery.findRandomPointAroundCircle(startPoint.dtpolyRef, startPoint.data, maxRadius, filter, frand, &randomdata.dtpolyRef, randomdata.data); }));
+        const dtQueryFilter *filter = (const dtQueryFilter *)&filter_ptr;
+        return dtnavMeshQuery.findRandomPointAroundCircle(startPoint.dtpolyRef, startPoint.data, maxRadius, filter, frand, &randomdata.dtpolyRef, randomdata.data); }));
 }

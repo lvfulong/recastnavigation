@@ -31,8 +31,6 @@ file(GLOB_RECURSE RECASTDETOUR_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/../DetourTileCache/Source/*.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../Recast/Include/*.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../Recast/Source/*.cpp
-    #${CMAKE_SOURCE_DIR}/../RecastDemo/Source/ChunkyTriMesh.cpp
-    #${CMAKE_SOURCE_DIR}/../RecastDemo/Contrib/fastlz/fastlz.c
 )
 
 include_directories(
@@ -42,8 +40,6 @@ include_directories(
   ${CMAKE_CURRENT_SOURCE_DIR}/../DetourTileCache/Include
   ${CMAKE_CURRENT_SOURCE_DIR}/../DetourTileCacheBuilder/Include
   ${CMAKE_CURRENT_SOURCE_DIR}/../Recast/Include
-  ${CMAKE_CURRENT_SOURCE_DIR}/../RecastDemo/Include
-  ${CMAKE_CURRENT_SOURCE_DIR}/../DebugUtils/Include
 )
 
 SET(EXE_NAME "recast-navigation")
@@ -62,7 +58,6 @@ set(EMCC_GLUE_ARGS
   -I${CMAKE_CURRENT_SOURCE_DIR}/../DetourCrowd/Include
   -I${CMAKE_CURRENT_SOURCE_DIR}/../DetourTileCache/Include
   -I${CMAKE_CURRENT_SOURCE_DIR}/../Recast/Include
-  -I${CMAKE_CURRENT_SOURCE_DIR}/../DebugUtils/Include
   #-include${ENTRY_HEADER_FILE}
 )
 
@@ -75,5 +70,5 @@ add_executable(${EXE_NAME} ${SRC_FILES} ${RECASTDETOUR_FILES})
 #target_compile_options(${EXE_NAME}  PUBLIC "$<$<BOOL:${MSVC}>:/permissive->")
 #target_link_options(${EXE_NAME}  PUBLIC "--bind -s EXPORT_NAME=Recast -s MODULARIZE=1")
 set_target_properties(${EXE_NAME} PROPERTIES
-	LINK_FLAGS "--bind -s EXPORT_NAME=Recast -s MODULARIZE=1"
+	LINK_FLAGS "--bind  -s EXPORT_NAME=Recast -s ALLOW_MEMORY_GROWTH=1 -s EXPORTED_FUNCTIONS=_malloc,_free -s MODULARIZE=1 -g"
 )
