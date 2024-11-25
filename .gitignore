@@ -9,6 +9,9 @@
 *.so
 *.idb
 
+demo
+.vscode
+dist
 ## Linux exes have no extension
 RecastDemo/Bin/RecastDemo
 RecastDemo/Bin/Tests
@@ -53,3 +56,4 @@ build
 ## IDE files
 .idea/
 cmake-build-*/
+web/

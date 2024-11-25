@@ -16,6 +16,7 @@ private:
     int m_triIndexCount;
     int m_triFlagCount;
     friend class NavTileCache;
+    friend class NavTileCache2D;
 
 public:
     NavTileData() : m_triVertex(0), m_triIndex(0), m_triFlag(0)
@@ -59,15 +60,15 @@ public:
     }
     ~NavTileData()
     {
-        delete[] m_triVertex;
-        delete[] m_triIndex;
-        delete[] m_triFlag;
+        dtFree(m_triVertex);
+        dtFree(m_triIndex);
+        dtFree(m_triFlag);
     }
 };
 
 class NavTileCache
 {
-private:
+protected:
     const NavTileData *m_TileData;
     float *m_triVertex;
     uint8_t *m_triFlag;
@@ -77,9 +78,10 @@ public:
     void init(const NavTileData *data)
     {
         m_TileData = data;
-        m_triVertex = new float[data->m_triVertexCount];
+        m_triVertex = (float *)dtAlloc(sizeof(float) * data->m_triVertexCount, DT_ALLOC_PERM);
         memcpy(m_triVertex, data->m_triVertex, data->m_triVertexCount * sizeof(float));
-        m_triFlag = new uint8_t[data->m_triFlagCount];
+        // m_triFlag = new uint8_t[data->m_triFlagCount];
+        m_triFlag = (uint8_t *)dtAlloc(sizeof(uint8_t) * data->m_triFlagCount, DT_ALLOC_PERM);
         memcpy(m_triFlag, data->m_triFlag, data->m_triFlagCount * sizeof(uint8_t));
     }
 
@@ -109,5 +111,14 @@ public:
     const uint8_t *getFlags() { return m_triFlag; }
     ~NavTileCache()
     {
+        if (m_triVertex)
+        {
+            dtFree(m_triVertex);
+        }
+
+        if (m_triFlag)
+        {
+            dtFree(m_triFlag);
+        }
     }
 };

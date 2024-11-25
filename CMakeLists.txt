@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.1)
+cmake_minimum_required(VERSION 3.27.4)
 
 project(RecastNavigation)
 
@@ -48,11 +48,9 @@ configure_file(
 install(FILES "${RecastNavigation_BINARY_DIR}/recastnavigation.pc"
         DESTINATION "${CMAKE_INSTALL_LIBDIR}/pkgconfig")
 
-add_subdirectory(DebugUtils)
 add_subdirectory(Detour)
 add_subdirectory(DetourCrowd)
 add_subdirectory(DetourTileCache)
-add_subdirectory(Recast)
 add_subdirectory(EmscriptenBindings)
 
 configure_package_config_file(

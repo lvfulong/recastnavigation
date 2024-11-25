@@ -204,6 +204,8 @@ struct TitleConfig
     float agentHeight;
     float agentRadius;
     float agentMaxClimb;
+    float maxSimplificationError;
+    int maxEdgeLen;
 };
 
 inline unsigned int nextPow2(unsigned int v)
@@ -244,31 +246,50 @@ enum PartitionType
     PARTITION_LAYERS
 };
 
+inline void printMsg(char const *msg, float *time){
+    float now = emscripten_get_now();
+    printf(" __ %s: %f \n",msg,now - *time);
+    *time = now;
+}
+
 unsigned char *creatNavMeshData(rcConfig m_cfg, TitleConfig titleconfig, val datas, int &dataSize, LayaOffMeshConnection *linkMesh, LayaConvexVolume *volumes)
 {
+    float now = emscripten_get_now();
     m_cfg.walkableClimb = dtMax((int)ceilf(titleconfig.agentMaxClimb / m_cfg.ch), 1);
     m_cfg.walkableHeight = (int)ceilf(titleconfig.agentHeight / m_cfg.ch);
     m_cfg.walkableRadius = (int)ceilf(titleconfig.agentRadius / m_cfg.cs);
-    m_cfg.maxEdgeLen = (int)ceilf(17.0f / m_cfg.cs);
-    m_cfg.minRegionArea = (int)rcSqr(8); // Note: area = size*size
-    m_cfg.mergeRegionArea = (int)rcSqr(10);
-    m_cfg.borderSize = m_cfg.walkableRadius + 2;
+    m_cfg.maxEdgeLen = titleconfig.maxEdgeLen;
+    m_cfg.minRegionArea = 64;
+    m_cfg.mergeRegionArea = 40000;
+    m_cfg.borderSize = m_cfg.walkableRadius + 3;
     m_cfg.width = m_cfg.tileSize + m_cfg.borderSize * 2;
     m_cfg.height = m_cfg.tileSize + m_cfg.borderSize * 2;
-    m_cfg.maxSimplificationError = 1.5f;
-    m_cfg.detailSampleDist = dtMax(m_cfg.cs * 10.0f, 0.9f);
+    m_cfg.maxSimplificationError = titleconfig.maxSimplificationError;
+    m_cfg.detailSampleDist = m_cfg.cs * 6.0f;
     m_cfg.detailSampleMaxError = m_cfg.ch;
     m_cfg.maxVertsPerPoly = 6.0f;
-    // double start = emscripten_get_now();
-    const std::vector<NavTileCache> dataVec = vecFromJSArray<NavTileCache>(datas);
+
+    rcContext m_ctx;
+    rcVcopy(m_cfg.bmin, titleconfig.bmin);
+    rcVcopy(m_cfg.bmax, titleconfig.bmax);
+    const float border = m_cfg.borderSize * m_cfg.cs;
+    m_cfg.bmin[0] -= border;
+    m_cfg.bmin[2] -= border;
+    m_cfg.bmax[0] += border;
+    m_cfg.bmax[2] += border;
+
+    const std::vector<int> vids = vecFromJSArray<int>(datas);
+    std::vector<NavTileCache *> dataVec;
     int nverts = 0;
     int ntris = 0;
     int triFlagCount = 0;
-    for (auto iter : dataVec)
+    for (int i = 0; i < vids.size(); i++)
     {
-        nverts += iter.getTriVertexCount();
-        ntris += iter.getTriIndexCount();
-        triFlagCount += iter.getTriFlagCount();
+        NavTileCache *iter = (NavTileCache *)vids[i];
+        dataVec.push_back(iter);
+        nverts += iter->getTriVertexCount();
+        ntris += iter->getTriIndexCount();
+        triFlagCount += iter->getTriFlagCount();
     }
 
     float *verts = new float[nverts];
@@ -279,32 +300,25 @@ unsigned char *creatNavMeshData(rcConfig m_cfg, TitleConfig titleconfig, val dat
     triFlagCount = 0;
     for (auto iter : dataVec)
     {
-        memcpy(&verts[nverts], iter.getVerts(), sizeof(float) * iter.getTriVertexCount());
-        memcpy(&triFlag[triFlagCount], iter.getFlags(), sizeof(uint8_t) * iter.getTriFlagCount());
-        memcpy(&tris[ntris], iter.getTris(), sizeof(int) * iter.getTriIndexCount());
+        memcpy(&verts[nverts], iter->getVerts(), sizeof(float) * iter->getTriVertexCount());
+        memcpy(&triFlag[triFlagCount], iter->getFlags(), sizeof(uint8_t) * iter->getTriFlagCount());
+        memcpy(&tris[ntris], iter->getTris(), sizeof(int) * iter->getTriIndexCount());
         int vertsCount = nverts / 3;
         if (vertsCount > 0)
         {
-            int triCount = iter.getTriIndexCount();
+            int triCount = iter->getTriIndexCount();
             for (int i = 0; i < triCount; i++)
             {
                 tris[ntris + i] += vertsCount;
             }
         }
-        nverts += iter.getTriVertexCount();
-        triFlagCount += iter.getTriFlagCount();
-        ntris += iter.getTriIndexCount();
+        nverts += iter->getTriVertexCount();
+        triFlagCount += iter->getTriFlagCount();
+        ntris += iter->getTriIndexCount();
     }
     ntris /= 3;
-
-    rcContext m_ctx;
-    rcVcopy(m_cfg.bmin, titleconfig.bmin);
-    rcVcopy(m_cfg.bmax, titleconfig.bmax);
-    m_cfg.bmin[0] -= m_cfg.borderSize * m_cfg.cs;
-    m_cfg.bmin[2] -= m_cfg.borderSize * m_cfg.cs;
-    m_cfg.bmax[0] += m_cfg.borderSize * m_cfg.cs;
-    m_cfg.bmax[2] += m_cfg.borderSize * m_cfg.cs;
-
+    printMsg("creatNavMeshData", &now);
+    
     rcHeightfield *solid = rcAllocHeightfield();
     if (!solid)
     {
@@ -315,10 +329,14 @@ unsigned char *creatNavMeshData(rcConfig m_cfg, TitleConfig titleconfig, val dat
         return 0;
     }
 
+    printMsg("rcCreateHeightfield", &now);
+    
     if (!rcRasterizeTriangles(&m_ctx, verts, nverts, tris, triFlag, ntris, *solid, m_cfg.walkableClimb))
     {
         return 0;
     }
+
+    printMsg("rcRasterizeTriangles", &now);
 
     delete[] verts;
     delete[] tris;
@@ -331,6 +349,8 @@ unsigned char *creatNavMeshData(rcConfig m_cfg, TitleConfig titleconfig, val dat
     rcFilterLedgeSpans(&m_ctx, m_cfg.walkableHeight, m_cfg.walkableClimb, *solid);
     rcFilterWalkableLowHeightSpans(&m_ctx, m_cfg.walkableHeight, *solid);
 
+    printMsg("rcFilterLowHangingWalkableObstacles", &now);  
+ 
     rcCompactHeightfield *m_chf = rcAllocCompactHeightfield();
     if (!m_chf)
     {
@@ -341,6 +361,8 @@ unsigned char *creatNavMeshData(rcConfig m_cfg, TitleConfig titleconfig, val dat
         return 0;
     }
 
+    printMsg("rcBuildCompactHeightfield", &now);
+
     rcFreeHeightField(solid);
     solid = 0;
 
@@ -349,10 +371,22 @@ unsigned char *creatNavMeshData(rcConfig m_cfg, TitleConfig titleconfig, val dat
         return 0;
     }
 
-    for (int i = 0; i < volumes->m_ConvexCount; i++)
+    printMsg("rcErodeWalkableArea", &now);
+
+    if (volumes->is3D)
     {
-        // rcMarkConvexPolyArea(&m_ctx, &volumes->m_verts[i * 12], 4, volumes->m_hmin[i], volumes->m_hmax[i], volumes->m_area[i], *m_chf);
-        rcMarkConvexVolume(&m_ctx, volumes, i, *m_chf);
+        for (int i = 0; i < volumes->m_ConvexCount; ++i)
+        {
+            rcMarkConvexVolume(&m_ctx, volumes, i, *m_chf);
+        }
+    }
+    else
+    {
+        const ConvexVolume *vols = volumes->m_volumes;
+        for (int i = 0; i < volumes->m_ConvexCount; ++i)
+        {
+            rcMarkConvexPolyArea(&m_ctx, vols[i].verts, vols[i].nverts, vols[i].hmin, vols[i].hmax, (unsigned char)vols[i].area, *m_chf);
+        }
     }
 
     if (titleconfig.partitionType == PARTITION_WATERSHED)
@@ -382,6 +416,8 @@ unsigned char *creatNavMeshData(rcConfig m_cfg, TitleConfig titleconfig, val dat
         }
     }
 
+    printMsg("rcBuildRegions", &now);
+
     rcContourSet *m_cset = rcAllocContourSet();
     if (!m_cset)
     {
@@ -391,6 +427,9 @@ unsigned char *creatNavMeshData(rcConfig m_cfg, TitleConfig titleconfig, val dat
     {
         return 0;
     }
+
+    printMsg("rcBuildContours", &now);
+   
 
     rcPolyMesh *m_pmesh = rcAllocPolyMesh();
     if (!m_pmesh)
@@ -402,6 +441,7 @@ unsigned char *creatNavMeshData(rcConfig m_cfg, TitleConfig titleconfig, val dat
         return 0;
     }
 
+    printMsg("rcBuildPolyMesh", &now);
     //
     // Step 7. Create detail mesh which allows to access approximate height on each polygon.
     //
@@ -417,6 +457,8 @@ unsigned char *creatNavMeshData(rcConfig m_cfg, TitleConfig titleconfig, val dat
         return 0;
     }
 
+    printMsg("rcBuildPolyMeshDetail", &now);
+
     rcFreeCompactHeightfield(m_chf);
     m_chf = 0;
     rcFreeContourSet(m_cset);
@@ -424,13 +466,13 @@ unsigned char *creatNavMeshData(rcConfig m_cfg, TitleConfig titleconfig, val dat
 
     unsigned char *navData = 0;
     int navDataSize = 0;
+
     if (m_cfg.maxVertsPerPoly <= DT_VERTS_PER_POLYGON)
     {
-
         // Update poly flags from areas.
         for (int i = 0; i < m_pmesh->npolys; ++i)
         {
-            m_pmesh->flags[i] = 1 << m_pmesh->areas[i];
+            m_pmesh->flags[i] = 1 << int(m_pmesh->areas[i] - 1);
         }
 
         dtNavMeshCreateParams params;
@@ -471,9 +513,30 @@ unsigned char *creatNavMeshData(rcConfig m_cfg, TitleConfig titleconfig, val dat
         }
     }
 
+    printMsg("dtCreateNavMeshData", &now);
+
     dataSize = navDataSize;
-    // printf("We waited long enough, %f ms\n", emscripten_get_now() - start);
     return navData;
+}
+
+inline val updateCrowd(dtCrowd *crowd, const float dt)
+{
+    crowd->update(dt, 0);
+    int agentCount = crowd->getAgentCount();
+    float buffer[agentCount * 6];
+    for (int i = 0; i < agentCount; i++)
+    {
+        const dtCrowdAgent *agent = crowd->getAgent(i);
+        const float *pos = agent->npos;
+        const float *dvel = agent->dvel;
+        buffer[i * 6 + 0] = pos[0];
+        buffer[i * 6 + 1] = pos[1];
+        buffer[i * 6 + 2] = pos[2];
+        buffer[i * 6 + 3] = dvel[0];
+        buffer[i * 6 + 4] = dvel[1];
+        buffer[i * 6 + 5] = dvel[2];
+    }
+    return CreateArrayView<float>(buffer, agentCount * 6);
 }
 
 EMSCRIPTEN_BINDINGS(recastnavigation)
@@ -486,6 +549,7 @@ EMSCRIPTEN_BINDINGS(recastnavigation)
     function("dtFreeNavMesh", dtFreeNavMesh, allow_raw_pointers());
     function("dtFreeCrowd", dtFreeCrowd, allow_raw_pointers());
     function("dtFree", dtFree, allow_raw_pointers());
+    function("updateCrowd", updateCrowd, allow_raw_pointers());
 
     value_array<Vec3>("Vec3")
         .element(emscripten::index<0>())
@@ -503,18 +567,18 @@ EMSCRIPTEN_BINDINGS(recastnavigation)
 
     class_<LayaConvexVolume>("dtConvexVolume")
         .constructor<>()
-        .function("addCovexVoume", optional_override([](LayaConvexVolume *volume, val data, val trans, unsigned char area)
+        .function("setIs3D", &LayaConvexVolume::setIs3D)
+        .function("addCovexVoume", optional_override([](LayaConvexVolume *volume, int id, val data, const float minh, const float maxh, unsigned char area)
                                                      {
                                                             const std::vector<float> dataVec = convertJSArrayToNumberVector<float>(data);
-                                                            const std::vector<float> transVec = convertJSArrayToNumberVector<float>(trans);
-                                                            return volume->addCovexVoume(dataVec.data(), transVec.data(),area); }),
+                                                            return volume->addCovexVoume(id,dataVec.data(),dataVec.size(),minh,maxh,area); }),
                   allow_raw_pointers())
-        .function("updateCovexVoume", optional_override([](LayaConvexVolume *volume, int id, val data, val trans, unsigned char area)
-                                                        {
-                                                            const std::vector<float> dataVec = convertJSArrayToNumberVector<float>(data);
-                                                            const std::vector<float> transVec = convertJSArrayToNumberVector<float>(trans);
-                                                            volume->updateCovexVoume(id, dataVec.data(), transVec.data(), area); }),
-                  allow_raw_pointers())
+        // .function("updateCovexVoume", optional_override([](LayaConvexVolume *volume, int id, val data, const float minh, const float maxh,  unsigned char area)
+        //                                                 {
+        //                                                     const std::vector<float> dataVec = convertJSArrayToNumberVector<float>(data);
+        //                                                      int nverts = (int)(dataVec.size()/3);
+        //                                                     volume->updateCovexVoume(id, dataVec.data(), nverts,minh,maxh, area); }),
+        //           allow_raw_pointers())
         .function("deleteCovexVoume", &LayaConvexVolume::deleteCovexVoume);
 
     class_<NavTileData>("dtNavTileData")
@@ -529,7 +593,10 @@ EMSCRIPTEN_BINDINGS(recastnavigation)
                   allow_raw_pointers())
         .function("setTriFlag", optional_override([](NavTileData *titleData, val data)
                                                   { const std::vector<uint8_t> dataVec = convertJSArrayToNumberVector<uint8_t>(data);
-        titleData->setTriFlag(dataVec.data(), dataVec.size()); }),
+                                                    titleData->setTriFlag(dataVec.data(), dataVec.size()); }),
+                  allow_raw_pointers())
+        .function("destroy", optional_override([](NavTileData *titleData)
+                                               { titleData->~NavTileData(); }),
                   allow_raw_pointers());
 
     class_<NavTileCache>("dtNavTileCache")
@@ -547,6 +614,9 @@ EMSCRIPTEN_BINDINGS(recastnavigation)
         .function("transfromData", optional_override([](NavTileCache *cache, val data)
                                                      { const std::vector<float> dataVec = convertJSArrayToNumberVector<float>(data);
                                                         cache->transfromData(dataVec.data()); }),
+                  allow_raw_pointers())
+        .function("destroy", optional_override([](NavTileCache *cache)
+                                               { cache->~NavTileCache(); }),
                   allow_raw_pointers());
 
     value_object<rcConfig>("rcConfig")
@@ -563,7 +633,9 @@ EMSCRIPTEN_BINDINGS(recastnavigation)
         .field("partitionType", &TitleConfig::partitionType)
         .field("agentHeight", &TitleConfig::agentHeight)
         .field("agentRadius", &TitleConfig::agentRadius)
-        .field("agentMaxClimb", &TitleConfig::agentMaxClimb);
+        .field("agentMaxClimb", &TitleConfig::agentMaxClimb)
+        .field("maxEdgeLen", &TitleConfig::maxEdgeLen)
+        .field("maxSimplificationError", &TitleConfig::maxSimplificationError);
 
     enum_<dtStraightPathFlags>("dtStraightPathFlags")
         .value("DT_STRAIGHTPATH_START", DT_STRAIGHTPATH_START)
@@ -603,6 +675,8 @@ EMSCRIPTEN_BINDINGS(recastnavigation)
                                                 { return CreateArrayView<unsigned short>(poly.verts, poly.vertCount); }))
         .function("getType", &dtPoly::getType)
         .function("getArea", &dtPoly::getArea)
+        // .function("getNeis", optional_override([](dtPoly &poly)
+        //                                        { return CreateArrayView<unsigned short>(poly.neis, poly.vertCount); }));
         .function("getNeis", optional_override([](dtPoly &poly, int i)
                                                { return poly.neis[i]; }));
     class_<dtPolyDetail>("dtPolyDetail")
@@ -747,19 +821,30 @@ EMSCRIPTEN_BINDINGS(recastnavigation)
                                                 params.maxTiles = 1 << tileBits;
                                                 params.maxPolys = 1 << polyBits;
                                                 dtnaveMesh.init(&params); }))
+        // .function("init2d", optional_override([](dtNavMesh &dtnaveMesh, Vec3 min, Vec3 max,const int polyBits)
+        //                                      {
+        //                                         const float *bmin = min.data();
+        //                                         const float *bmax = max.data();
+        //                                         dtNavMeshParams params;
+        //                                         rcVcopy(params.orig, bmin);
+        //                                         params.tileWidth = bmax[0] - bmin[0];
+        //                                         params.tileHeight = bmax[2] - bmin[2];
+        //                                         params.maxTiles = 1;
+        //                                         params.maxPolys = 1 << polyBits;
+        //                                         dtnaveMesh.init(&params); }))
         .function("getMaxTiles", &dtNavMesh::getMaxTiles)
         .function("addTile", optional_override([](dtNavMesh &dtnaveMesh, rcConfig m_cfg, TitleConfig titleconfig, val data_ptr, LayaOffMeshConnection *linkMesh, LayaConvexVolume *volumes)
                                                {
+                                                    float now = emscripten_get_now();
                                                     int navDataSize = 0;
                                                     unsigned char *navData = creatNavMeshData(m_cfg, titleconfig, data_ptr, navDataSize, linkMesh, volumes);
+                                                    printMsg("***creatNavMeshData", &now);
                                                     if (navData)
                                                     {
                                                         dtnaveMesh.addTile(navData, navDataSize, DT_TILE_FREE_DATA, 0, 0);
-                                                    }
-                                                    else
-                                                    {
-                                                        printf("fail tile\n");
-                                                    } }),
+                                                        printMsg("***addTile", &now);
+                                                    } 
+                                                }),
                   allow_raw_pointers())
         .function("getTile", select_overload<const dtMeshTile *(int) const>(&dtNavMesh::getTile), allow_raw_pointers())
         .function("getTileRefAt", &dtNavMesh::getTileRefAt)
@@ -866,31 +951,31 @@ EMSCRIPTEN_BINDINGS(recastnavigation)
                                                            Vec3 startPos, Vec3 endPos,
                                                            dtQueryFilter &filter_ptr, const int maxVisitedSize)
                                                         {
-        const dtQueryFilter *filter = (const dtQueryFilter *)&filter_ptr;
-        float result[3];
-        dtPolyRef visited[maxVisitedSize];
-        int nvisited = 0;
-        dtStatus status = dtnavMeshQuery.moveAlongSurface(ref, startPos.data(), endPos.data(), filter, result, visited, &nvisited, maxVisitedSize);
-        auto out = val::object();
-        out.set("resultPos", CreateArray<float>(&result[0], 3));
-        out.set("visited", CreateArrayView<dtPolyRef>(&visited[0], nvisited));
-        out.set("status", val(status));
-        return out; }))
+                                                                const dtQueryFilter *filter = (const dtQueryFilter *)&filter_ptr;
+                                                                float result[3];
+                                                                dtPolyRef visited[maxVisitedSize];
+                                                                int nvisited = 0;
+                                                                dtStatus status = dtnavMeshQuery.moveAlongSurface(ref, startPos.data(), endPos.data(), filter, result, visited, &nvisited, maxVisitedSize);
+                                                                auto out = val::object();
+                                                                out.set("resultPos", CreateArray<float>(&result[0], 3));
+                                                                out.set("visited", CreateArrayView<dtPolyRef>(&visited[0], nvisited));
+                                                                out.set("status", val(status));
+                                                                return out; }))
         .function("findNearestPoly", optional_override([](dtNavMeshQuery &dtnavMeshQuery,
                                                           Vec3 &center, Vec3 halfExtents, dtQueryFilter &filter_ptr)
                                                        {
-        const dtQueryFilter *filter = (const dtQueryFilter *)&filter_ptr;
-        dtRefPointData refpoint;
-        dtnavMeshQuery.findNearestPoly(center.data(), halfExtents.data(), filter, &refpoint.dtpolyRef, &refpoint.data[0]);
-        return refpoint; }))
+                                                                const dtQueryFilter *filter = (const dtQueryFilter *)&filter_ptr;
+                                                                dtRefPointData refpoint;
+                                                                dtnavMeshQuery.findNearestPoly(center.data(), halfExtents.data(), filter, &refpoint.dtpolyRef, &refpoint.data[0]);
+                                                                return refpoint; }))
         .function("findRandomPoint", optional_override([](dtNavMeshQuery &dtnavMeshQuery, dtQueryFilter &filter_ptr, dtRefPointData &randomdata)
                                                        {
-        const dtQueryFilter *filter = (const dtQueryFilter *)&filter_ptr;
-        return dtnavMeshQuery.findRandomPoint(filter, frand, &randomdata.dtpolyRef, randomdata.data); }))
+                                                                const dtQueryFilter *filter = (const dtQueryFilter *)&filter_ptr;
+                                                                return dtnavMeshQuery.findRandomPoint(filter, frand, &randomdata.dtpolyRef, randomdata.data); }))
         .function("findRandomPointAroundCircle", optional_override([](dtNavMeshQuery &dtnavMeshQuery,
                                                                       dtRefPointData &startPoint, float maxRadius,
                                                                       dtQueryFilter &filter_ptr, dtRefPointData &randomdata)
                                                                    {
-        const dtQueryFilter *filter = (const dtQueryFilter *)&filter_ptr;
-        return dtnavMeshQuery.findRandomPointAroundCircle(startPoint.dtpolyRef, startPoint.data, maxRadius, filter, frand, &randomdata.dtpolyRef, randomdata.data); }));
+                                                                    const dtQueryFilter *filter = (const dtQueryFilter *)&filter_ptr;
+                                                                    return dtnavMeshQuery.findRandomPointAroundCircle(startPoint.dtpolyRef, startPoint.data, maxRadius, filter, frand, &randomdata.dtpolyRef, randomdata.data); }));
 }
